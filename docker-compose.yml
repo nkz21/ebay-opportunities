@@ -1,0 +1,81 @@
+version: "3.9"
+
+services:
+  ebay-bot:
+    build: ./bot
+    container_name: ebay-bot
+    env_file: .env
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-net
+
+  ebay-exporter:
+    image: python:3.12-slim
+    container_name: ebay-exporter
+    command: >
+      sh -c "pip install -q prometheus-client && python -c \"from http.server import HTTPServer, BaseHTTPRequestHandler; HTTPServer(('0.0.0.0',9877), type('H', (BaseHTTPRequestHandler,), {'do_GET': lambda self: (self.send_response(200), self.send_header('Content-Type','text/plain'), self.end_headers(), self.wfile.write(b'# exporter placeholder'))})()).serve_forever()\""
+    ports:
+      - "9877:9877"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9877/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - app-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ebay-postgres
+    env_file: .env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d ebay"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - app-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: ebay-redis
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - app-net
+
+  adminer:
+    image: adminer:4
+    container_name: ebay-adminer
+    depends_on:
+      - postgres
+    ports:
+      - "8095:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
